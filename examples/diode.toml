@@ -1,0 +1,11 @@
+# Example device configuration for semisim.load_device()
+[device]
+type = "pn_junction"
+material = "Si"
+
+[device.parameters]
+na = 1e17
+nd = 1e16
+area = 1e-4
+temperature = 300.0
+series_resistance = 5.0
