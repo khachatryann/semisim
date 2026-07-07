@@ -4,6 +4,16 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](pyproject.toml)
 
+![semiconductor](https://img.shields.io/badge/-semiconductor-lightgrey)
+![device-physics](https://img.shields.io/badge/-device--physics-lightgrey)
+![diode](https://img.shields.io/badge/-diode-lightgrey)
+![mosfet](https://img.shields.io/badge/-mosfet-lightgrey)
+![python](https://img.shields.io/badge/-python-lightgrey)
+![numpy](https://img.shields.io/badge/-numpy-lightgrey)
+![matplotlib](https://img.shields.io/badge/-matplotlib-lightgrey)
+![education](https://img.shields.io/badge/-education-lightgrey)
+![physics-simulation](https://img.shields.io/badge/-physics--simulation-lightgrey)
+
 An educational semiconductor device physics simulator in pure Python (NumPy +
 Matplotlib). Analytic models of a **PN junction diode** and a **long-channel
 NMOS transistor** with configurable materials (Si, Ge), doping, and
