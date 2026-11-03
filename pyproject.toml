@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "semisim"
-version = "0.1.0"
-description = "Educational semiconductor device physics simulator: PN junction diodes and MOSFETs"
+version = "2.0.0"
+description = "Educational semiconductor device physics simulator: PN junction diodes and NMOS/PMOS transistors"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Anton", email = "raintigran@gmail.com" }]
 requires-python = ">=3.10"
 keywords = ["semiconductor", "device-physics", "diode", "mosfet", "education"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Education",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
@@ -20,6 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
@@ -34,9 +35,13 @@ dev = [
     "ruff>=0.4,<1",
 ]
 
+[project.scripts]
+semisim = "semisim.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/khachatryann/semisim"
 Issues = "https://github.com/khachatryann/semisim/issues"
+Changelog = "https://github.com/khachatryann/semisim/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/semisim"]

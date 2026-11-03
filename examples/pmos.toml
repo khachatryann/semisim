@@ -1,0 +1,14 @@
+# PMOS with velocity saturation and doping-dependent mobility.
+# semisim info examples/pmos.toml
+[device]
+type = "pmos"
+material = "Si"
+
+[device.parameters]
+body_doping = 1e17      # n-well donors [cm^-3]
+tox = 1e-6              # 10 nm
+width = 2e-3            # 20 um
+length = 1e-4           # 1 um
+mobility_model = "caughey-thomas"
+vsat = 8e6              # hole saturation velocity [cm/s]
+lambda_clm = 0.05

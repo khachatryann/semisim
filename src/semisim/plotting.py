@@ -114,7 +114,8 @@ def plot_mosfet_output(
     vgs_values : sequence of float
         Gate voltages [V], one curve each.
     vds_max : float, optional
-        Maximum drain voltage of the sweep [V].
+        Magnitude of the drain-voltage sweep [V]; the sweep runs towards
+        negative ``Vds`` for a PMOS.
     points : int, optional
         Samples in the Vds sweep.
     ax : matplotlib.axes.Axes, optional
@@ -126,13 +127,13 @@ def plot_mosfet_output(
     """
     if ax is None:
         _, ax = plt.subplots(figsize=(7, 5))
-    vds = np.linspace(0.0, vds_max, points)
+    vds = np.linspace(0.0, mosfet.polarity * abs(vds_max), points)
     for vgs in vgs_values:
         i_d = mosfet.current(vgs=vgs, vds=vds)
         ax.plot(vds, i_d * 1e3, label=f"$V_{{GS}}$ = {vgs:g} V")
     ax.set_xlabel("$V_{DS}$ [V]")
     ax.set_ylabel("$I_D$ [mA]")
-    ax.set_title("MOSFET output characteristics")
+    ax.set_title(f"{mosfet.channel.upper()}MOS output characteristics")
     ax.grid(True, alpha=0.3)
     ax.legend()
     return ax
@@ -141,7 +142,7 @@ def plot_mosfet_output(
 def plot_mosfet_transfer(
     mosfet: MOSFET,
     vds: float,
-    vgs_range: tuple[float, float] = (0.0, 3.0),
+    vgs_range: tuple[float, float] | None = None,
     points: int = 300,
     log: bool = False,
     ax: plt.Axes | None = None,
@@ -155,7 +156,8 @@ def plot_mosfet_transfer(
     vds : float
         Drain voltage [V].
     vgs_range : tuple of float, optional
-        (min, max) gate voltage sweep [V].
+        (start, stop) gate voltage sweep [V]; defaults to 0 -> 3 V
+        (0 -> -3 V for a PMOS).
     points : int, optional
         Samples in the sweep.
     log : bool, optional
@@ -169,18 +171,20 @@ def plot_mosfet_transfer(
     """
     if ax is None:
         _, ax = plt.subplots(figsize=(7, 5))
+    if vgs_range is None:
+        vgs_range = (0.0, 3.0 * mosfet.polarity)
     vgs = np.linspace(*vgs_range, points)
     i_d = mosfet.current(vgs=vgs, vds=vds)
     if log:
-        ax.semilogy(vgs, np.maximum(i_d, 1e-30), label=f"$V_{{DS}}$ = {vds:g} V")
+        ax.semilogy(vgs, np.maximum(np.abs(i_d), 1e-30), label=f"$V_{{DS}}$ = {vds:g} V")
     else:
         ax.plot(vgs, i_d * 1e3, label=f"$V_{{DS}}$ = {vds:g} V")
     ax.axvline(
         mosfet.threshold_voltage(), color="gray", ls=":", label="$V_{th}$"
     )
     ax.set_xlabel("$V_{GS}$ [V]")
-    ax.set_ylabel("$I_D$ [A]" if log else "$I_D$ [mA]")
-    ax.set_title("MOSFET transfer characteristic")
+    ax.set_ylabel("$|I_D|$ [A]" if log else "$I_D$ [mA]")
+    ax.set_title(f"{mosfet.channel.upper()}MOS transfer characteristic")
     ax.grid(True, alpha=0.3)
     ax.legend()
     return ax

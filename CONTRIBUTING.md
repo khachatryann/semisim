@@ -42,7 +42,7 @@ Both must pass; CI runs them on every push and pull request.
 
 ## Reporting bugs
 
-Please include: semisim version, Python version, a minimal script reproducing the
+Please include: semisim version (`semisim --version`), Python version, a minimal script reproducing the
 issue, and — for physics discrepancies — the reference value and its source.
 
 ## License

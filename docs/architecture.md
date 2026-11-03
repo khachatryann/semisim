@@ -5,14 +5,15 @@
 ```
 src/semisim/
 ├── constants.py       # CODATA constants, thermal_voltage()
-├── materials.py       # Material dataclass, SILICON/GERMANIUM, registry
-├── _math.py           # numerical helpers (log-space Lambert W)
+├── materials.py       # Material dataclass, Si/Ge/GaAs, Caughey-Thomas
+├── _math.py           # numerical helpers (log-space Lambert W, bisection)
 ├── config.py          # TOML -> Device factory
 ├── plotting.py        # matplotlib helpers (all return Axes)
+├── cli.py             # `semisim info|plot` console script
 └── devices/
     ├── base.py        # abstract Device
     ├── diode.py       # PNJunction
-    └── mosfet.py      # MOSFET
+    └── mosfet.py      # MOSFET (NMOS/PMOS)
 ```
 
 ## Design decisions
@@ -33,10 +34,20 @@ prescribes:
 - `parameters`: an inspectable dict.
 
 A SPICE-style netlist layer would map node voltages to each device's named
-terminals and call `current()` inside a Newton loop for nodal analysis. To
-support that fully, the natural next step is adding
-`conductance(**bias)` (analytic derivatives) to the interface — the models
-are closed-form, so the derivatives are straightforward.
+terminals and call `current()` inside a Newton loop for nodal analysis.
+Since v2 the Jacobian entries exist too: `PNJunction.conductance()` is
+analytic and `MOSFET.small_signal()` returns gm/gds/gmb.
+
+**PMOS by mirroring.** Rather than duplicating equations, `MOSFET`
+evaluates everything in NMOS-normalized coordinates (`_id_normalized`) and
+applies the polarity sign at the boundary. Any future model term is
+automatically available to both channel types.
+
+**Robust implicit solves.** The pure Shockley + Rs diode keeps its exact
+Lambert-W solution. Once extra junction terms exist (R-G, breakdown) there
+is no closed form, so `_math.bisect_monotonic` solves for the junction
+voltage: the junction I(V) is strictly increasing, so bisection is
+unconditionally convergent and overflow-tolerant (±inf compare correctly).
 
 **Config as a thin factory.** TOML keys map 1:1 to constructor keyword
 arguments; validation lives in the constructors so programmatic and config
@@ -59,8 +70,7 @@ footprint to NumPy + Matplotlib.
   `config._DEVICE_TYPES`, add tests mirroring `tests/test_diode.py`.
 - **New material:** add a `Material` constant and registry entry in
   `materials.py`.
-- **Better mobility model:** replace `Material.mobility_*`
-  with a doping-aware model (Caughey-Thomas); the device classes only call
-  these methods, so nothing else changes.
-- **Circuit level:** add `conductance()` to `Device`, then a `Netlist`
-  class performing Newton nodal analysis over device instances.
+- **Better mobility model:** extend `Material.mobility_*` (e.g. vertical-
+  field degradation for MOS); devices only call these methods.
+- **Circuit level:** a `Netlist` class performing Newton nodal analysis
+  over device instances, using `conductance()` / `small_signal()`.

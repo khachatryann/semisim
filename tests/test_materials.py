@@ -93,7 +93,7 @@ def test_get_material_aliases():
 
 def test_get_material_unknown_raises():
     with pytest.raises(KeyError):
-        get_material("GaAs")
+        get_material("InP")
 
 
 def test_check_doping_rejects_nonpositive():

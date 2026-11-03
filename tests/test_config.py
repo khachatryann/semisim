@@ -27,7 +27,7 @@ type = "mosfet"
 material = "Si"
 
 [device.parameters]
-na_substrate = 1e17
+body_doping = 1e17
 tox = 1e-6
 width = 1e-3
 length = 1e-4
@@ -83,7 +83,7 @@ def test_unknown_material_raises():
             {
                 "device": {
                     "type": "diode",
-                    "material": "GaAs",
+                    "material": "InP",
                     "parameters": {"na": 1e17, "nd": 1e17},
                 }
             }

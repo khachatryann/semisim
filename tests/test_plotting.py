@@ -38,7 +38,7 @@ def test_plot_band_diagram():
 
 
 def test_plot_mosfet_output_and_transfer():
-    m = MOSFET(na_substrate=1e17, tox=1e-6, width=1e-3, length=1e-4)
+    m = MOSFET(body_doping=1e17, tox=1e-6, width=1e-3, length=1e-4)
     ax = plot_mosfet_output(m, vgs_values=[1.0, 1.5, 2.0])
     assert len(ax.get_lines()) == 3
     ax2 = plot_mosfet_transfer(m, vds=1.0, log=True)
