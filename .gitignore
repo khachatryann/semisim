@@ -23,3 +23,6 @@ htmlcov/
 
 # Example outputs
 examples/*.png
+
+# Plots written by examples / CLI
+/*.png

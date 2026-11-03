@@ -1,0 +1,12 @@
+# Diode with recombination-generation current and reverse breakdown.
+# semisim plot examples/zener.toml --log -o zener.png
+[device]
+type = "pn_junction"
+material = "Si"
+
+[device.parameters]
+na = 1e18
+nd = 1e17
+tau_rg = 1e-7
+breakdown_voltage = "auto"
+series_resistance = 2.0

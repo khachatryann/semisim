@@ -30,7 +30,7 @@ def extract_vth_linear_extrapolation(mosfet: MOSFET, vds: float = 0.05) -> float
 
 def main() -> None:
     nmos = MOSFET(
-        na_substrate=1e17,
+        body_doping=1e17,
         tox=1e-6,  # 10 nm
         width=1e-3,  # 10 um
         length=1e-4,  # 1 um

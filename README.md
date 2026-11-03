@@ -6,9 +6,14 @@
 
 An educational semiconductor device physics simulator in pure Python (NumPy +
 Matplotlib). Analytic models of a **PN junction diode** and a **long-channel
-NMOS transistor** with configurable materials (Si, Ge), doping, and
-temperature — numerical results plus publication-style plots of I-V curves
-and band diagrams.
+MOSFET (NMOS & PMOS)** with configurable materials (Si, Ge, GaAs), doping,
+and temperature — numerical results plus publication-style plots of I-V
+curves and band diagrams.
+
+> **New in 2.0** — PMOS · GaAs · doping-dependent (Caughey-Thomas) mobility ·
+> diode recombination-generation current · avalanche breakdown ·
+> MOSFET velocity saturation · small-signal gm/gds/gmb & diode conductance ·
+> `semisim` command-line tool. See [CHANGELOG.md](CHANGELOG.md) (incl. migration notes).
 
 This is an engineering-reference and teaching tool built on closed-form
 textbook equations (Sze, Pierret). It is deliberately **not** a mesh-based
@@ -40,9 +45,25 @@ d_rs = PNJunction(na=1e17, nd=1e16, series_resistance=5.0)  # exact Lambert-W I-
 d_ge = PNJunction(na=1e17, nd=1e16, material=GERMANIUM)     # germanium diode
 
 # --- MOSFET ---
-m = MOSFET(na_substrate=1e17, tox=1e-6, width=1e-3, length=1e-4)  # cm units
+m = MOSFET(body_doping=1e17, tox=1e-6, width=1e-3, length=1e-4)  # cm units
 print(m.threshold_voltage())       # ~0.36 V
 i_d = m.current(vgs=1.5, vds=np.linspace(0, 3, 100))
+```
+
+New in 2.0:
+
+```python
+# Diode: n=2 recombination current + avalanche breakdown (BV estimated)
+d = PNJunction(na=1e18, nd=1e17, tau_rg=1e-7, breakdown_voltage="auto")
+print(d.breakdown_voltage)         # ~11.8 V
+print(1 / d.conductance(0.65))     # dynamic resistance [ohm]
+
+# PMOS with velocity saturation and doping-dependent mobility
+p = MOSFET(body_doping=1e17, tox=1e-6, width=2e-3, length=1e-4,
+           channel="p", vsat=8e6, mobility_model="caughey-thomas")
+print(p.threshold_voltage())       # ~-0.36 V
+print(p.current(vgs=-2.0, vds=-2.0))           # negative: flows out of drain
+print(p.small_signal(vgs=-2.0, vds=-2.0)["gm"])  # transconductance [S]
 ```
 
 Plotting:
@@ -63,12 +84,20 @@ from semisim import load_device
 d = load_device("examples/diode.toml")
 ```
 
+…or from the command line:
+
+```bash
+semisim info examples/pmos.toml                 # parameter summary
+semisim plot examples/zener.toml --log -o z.png # I-V + band diagram
+```
+
 ### Examples
 
 ```bash
 python examples/01_diode_iv_temperature.py   # diode I-V at 250/300/350 K
 python examples/02_diode_si_vs_ge.py         # Si vs Ge: Vbi, leakage, band diagrams
 python examples/03_mosfet_characteristics.py # output/transfer curves, Vth extraction
+python examples/04_v2_features.py            # breakdown, CMOS pair, gm/Id
 ```
 
 ## Units
@@ -80,9 +109,10 @@ in cm (10 nm oxide = `1e-6`), mobility in cm²/(V·s), capacitance in F/cm².
 
 Full derivations and references in [`docs/theory.md`](docs/theory.md).
 
-**Materials** — Varshni bandgap `Eg(T) = Eg(0) − αT²/(T+β)`; intrinsic
-concentration `ni = √(Nc Nv) exp(−Eg/2kT)` with `Nc,Nv ∝ T^1.5`; power-law
-mobility temperature scaling; Einstein relation `D = μ kT/q`.
+**Materials** (Si, Ge, GaAs) — Varshni bandgap `Eg(T) = Eg(0) − αT²/(T+β)`;
+intrinsic concentration `ni = √(Nc Nv) exp(−Eg/2kT)` with `Nc,Nv ∝ T^1.5`;
+power-law mobility temperature scaling; optional Caughey-Thomas doping
+dependence `μ = μmin + (μmax−μmin)/(1+(N/Nref)^α)`; Einstein relation `D = μ kT/q`.
 
 **PN junction** (abrupt, full-depletion approximation):
 
@@ -93,10 +123,14 @@ mobility temperature scaling; Einstein relation `D = μ kT/q`.
 - With series resistance the implicit equation is solved **exactly** via the
   Lambert W function (evaluated in log space — no overflow at any bias):
   `I = (nVT/Rs) · W₀[(Is Rs/nVT) e^((V+Is Rs)/nVT)] − Is`
+- Recombination-generation current (opt-in): `Irg = (qA ni W/2τ)(exp(V/2VT) − 1)`
+- Reverse breakdown knee (opt-in), BV from Sze-Gibbons:
+  `BV ≈ 60 (Eg/1.1)^1.5 (N_B/1e16)^−0.75`
+- Analytic small-signal conductance `g = gj/(1 + Rs gj)`
 - Band diagrams in the depletion approximation, with quasi-Fermi splitting
   under bias (illustrative).
 
-**MOSFET** (long-channel square law, NMOS):
+**MOSFET** (long-channel square law, NMOS and PMOS):
 
 - Threshold: `Vth = Vfb + 2φF + γ√(2φF + Vsb)`, with `φF = VT ln(Na/ni)`,
   `γ = √(2qεs Na)/Cox`, and `Vfb` defaulting to an ideal n⁺-poly gate
@@ -105,20 +139,24 @@ mobility temperature scaling; Einstein relation `D = μ kT/q`.
 - Subthreshold: EKV-style softplus interpolation of the overdrive giving
   `Id ∝ exp((Vgs−Vth)/mVT)` with `m = 1 + γ/(2√(2φF))` and a smooth handoff
   at threshold
+- Velocity saturation (opt-in): `Ec = 2vsat/μ`,
+  `Vdsat = Vov·EcL/(Vov + EcL)`, triode current divided by `(1 + Vds/EcL)`
+- PMOS as the exact mirror image (signed voltages, negative drain current)
+- Small-signal `gm`, `gds`, `gmb`, `ro`
 
 ## Model limits
 
 Simplifications you should know about before trusting a number:
 
 1. Boltzmann statistics only — degenerate doping (> 10¹⁹ cm⁻³) triggers a warning.
-2. No avalanche/Zener breakdown; reverse characteristics are ideal.
-3. Single-diode model: no recombination-generation (n=2) current term
-   (an ideality-factor knob is provided instead).
-4. Mobility is doping-independent (no Caughey-Thomas) with single power-law
-   temperature scaling; MOSFET default mobility is the bulk value
+2. Breakdown is an empirical exponential knee; the auto BV estimate is ±20 %
+   and Zener (tunneling) physics is not modeled.
+3. No high-level injection or band-gap narrowing in the diode.
+4. Mobility temperature scaling is a single power law (also applied to the
+   Caughey-Thomas curve); MOSFET default mobility is the bulk value
    (surface mobility is ~2× lower — override `mobility=` for quantitative work).
-5. MOSFET is long-channel: no velocity saturation, DIBL, or Vth roll-off;
-   NMOS only in v1.
+5. MOSFET: velocity saturation is included (opt-in) but there is no DIBL,
+   Vth roll-off, or vertical-field mobility degradation.
 6. Band diagrams under bias use flat quasi-Fermi splits, not a solved
    drift-diffusion profile.
 
@@ -127,19 +165,21 @@ Simplifications you should know about before trusting a number:
 ```
 src/semisim/
 ├── constants.py       # physical constants (CODATA), thermal voltage
-├── materials.py       # Material dataclass, Si/Ge presets
-├── _math.py           # pure-NumPy Lambert W (log-space)
+├── materials.py       # Material dataclass, Si/Ge/GaAs presets, Caughey-Thomas
+├── _math.py           # pure-NumPy Lambert W (log-space), vectorized bisection
 ├── config.py          # TOML -> device instances
 ├── plotting.py        # I-V, band diagram, output/transfer plots
+├── cli.py             # `semisim info|plot` command-line tool
 └── devices/
     ├── base.py        # abstract Device (terminals, current(), parameters)
     ├── diode.py       # PNJunction
-    └── mosfet.py      # MOSFET
+    └── mosfet.py      # MOSFET (NMOS/PMOS)
 ```
 
 All devices share the `Device` interface (named terminals, uniform
-`current(**bias)`), so a SPICE-style netlist/nodal-analysis layer can be added
-later without touching the physics classes. See
+`current(**bias)`) and small-signal derivatives, so a SPICE-style
+netlist/nodal-analysis layer can be added later without touching the physics
+classes. See
 [`docs/architecture.md`](docs/architecture.md).
 
 ## Development
@@ -150,7 +190,8 @@ ruff check .
 pytest
 ```
 
-CI runs both on every push/PR across Python 3.10–3.12. Contributions welcome —
+CI runs both on every push/PR across Python 3.10–3.13. Pushing a `v*` tag
+builds the wheel/sdist and publishes a GitHub Release automatically. Contributions welcome —
 see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## References
@@ -161,6 +202,12 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
   through diode with series resistance," *Electron. Lett.* 36(4), 2000.
 - Y. Tsividis, C. McAndrew, *Operation and Modeling of the MOS Transistor*,
   3rd ed., Oxford, 2011 (subthreshold interpolation).
+- C. Jacoboni et al., "A review of some charge transport properties of
+  silicon," *Solid-State Electron.* 20, 1977 (Caughey-Thomas parameters).
+- M. Sotoodeh et al., "Empirical low-field mobility model for III-V
+  compounds," *J. Appl. Phys.* 87, 2000.
+- C. T. Sah, R. N. Noyce, W. Shockley, "Carrier generation and recombination
+  in P-N junctions," *Proc. IRE* 45, 1957.
 
 ## License
 

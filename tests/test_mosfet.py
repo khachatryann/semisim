@@ -10,7 +10,7 @@ from semisim.materials import SILICON
 
 def make_mosfet(**overrides):
     kwargs = dict(
-        na_substrate=1e17,
+        body_doping=1e17,
         tox=1e-6,  # 10 nm
         width=1e-3,  # 10 um
         length=1e-4,  # 1 um
@@ -189,7 +189,7 @@ def test_negative_vds_raises():
 
 def test_invalid_construction_raises():
     with pytest.raises(ValueError):
-        make_mosfet(na_substrate=-1e17)
+        make_mosfet(body_doping=-1e17)
     with pytest.raises(ValueError):
         make_mosfet(tox=0.0)
     with pytest.raises(ValueError):
@@ -202,7 +202,7 @@ def test_invalid_construction_raises():
 
 def test_degenerate_substrate_warns():
     with pytest.warns(UserWarning):
-        make_mosfet(na_substrate=5e19)
+        make_mosfet(body_doping=5e19)
 
 
 def test_device_interface():

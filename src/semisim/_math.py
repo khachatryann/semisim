@@ -63,3 +63,39 @@ def lambertw_log(log_x: np.ndarray | float) -> np.ndarray:
             break
     w[active] = wa
     return w
+
+
+def bisect_monotonic(func, target, lo, hi, iterations: int = 200) -> np.ndarray:
+    """Vectorized bisection for ``func(x) = target`` with ``func`` increasing.
+
+    Parameters
+    ----------
+    func : callable
+        Element-wise, monotonically non-decreasing function of an ndarray.
+        May return ``inf``/``-inf`` (treated as above/below the target).
+    target, lo, hi : ndarray or float
+        Target values and bracketing bounds (broadcast together). The root
+        must lie in ``[lo, hi]``.
+    iterations : int, optional
+        Maximum number of halvings; stops early once the interval has
+        collapsed to machine precision everywhere.
+
+    Returns
+    -------
+    ndarray
+        Midpoint of the final bracket.
+    """
+    target, lo, hi = np.broadcast_arrays(
+        np.asarray(target, dtype=float), np.asarray(lo, dtype=float), np.asarray(hi, dtype=float)
+    )
+    lo = lo.copy()
+    hi = hi.copy()
+    for _ in range(iterations):
+        mid = 0.5 * (lo + hi)
+        if np.all((mid == lo) | (mid == hi)):
+            break
+        with np.errstate(over="ignore", invalid="ignore"):
+            above = func(mid) > target
+        hi = np.where(above, mid, hi)
+        lo = np.where(above, lo, mid)
+    return 0.5 * (lo + hi)

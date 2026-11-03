@@ -7,24 +7,32 @@ Physics implemented (see ``docs/theory.md`` for derivations and references):
   (abrupt junction) approximation.
 - Saturation current from the ideal-diode (Shockley) long-base
   diffusion model with configurable minority-carrier lifetimes.
+- Optional Caughey-Thomas (doping-dependent) minority-carrier mobility.
 - I-V from the Shockley equation with ideality factor; with a series
   resistance the implicit equation is solved exactly via the Lambert W
   function (evaluated in log space, so it does not overflow).
+- Optional Sah-Noyce-Shockley recombination-generation current in the
+  depletion region (the ``n = 2`` component of the two-diode model).
+- Optional reverse breakdown (SPICE-style exponential knee) with a
+  built-in estimate of the avalanche breakdown voltage (Sze & Gibbons).
+- Analytic small-signal conductance ``dI/dV``.
 - Equilibrium/biased band diagram in the depletion approximation with
   flat quasi-Fermi level splitting (illustrative, not self-consistent).
 
-Not modeled: avalanche/Zener breakdown, recombination-generation
-(two-diode) current, high-level injection, band-gap narrowing.
+Not modeled: high-level injection, band-gap narrowing, tunneling (Zener)
+physics beyond the empirical breakdown knee.
 """
 
 from typing import Any
 
 import numpy as np
 
-from .._math import lambertw_log
+from .._math import bisect_monotonic, lambertw_log
 from ..constants import Q, thermal_voltage
 from ..materials import SILICON, Material, check_doping
 from .base import Device
+
+_MOBILITY_MODELS = ("constant", "caughey-thomas")
 
 
 class PNJunction(Device):
@@ -50,6 +58,22 @@ class PNJunction(Device):
         Minority electron lifetime in the p region [s] (default 1e-6).
     tau_p : float, optional
         Minority hole lifetime in the n region [s] (default 1e-6).
+    mobility_model : {"constant", "caughey-thomas"}, optional
+        ``"constant"`` (default) uses lightly-doped bulk mobilities;
+        ``"caughey-thomas"`` evaluates each minority-carrier mobility at the
+        doping of the region it diffuses through.
+    tau_rg : float or None, optional
+        Effective depletion-region recombination-generation lifetime [s].
+        ``None`` (default) disables the recombination-generation current.
+    breakdown_voltage : float, "auto", or None, optional
+        Reverse breakdown voltage magnitude ``BV`` [V]. ``"auto"`` uses
+        :meth:`avalanche_breakdown_voltage`. ``None`` (default) disables
+        breakdown (ideal reverse characteristic).
+    breakdown_current : float, optional
+        Current magnitude at ``V = -BV`` [A] (default 1e-3, the knee).
+    breakdown_ideality : float, optional
+        Emission coefficient of the breakdown knee (default 1.0); larger
+        values give a softer knee.
 
     Examples
     --------
@@ -71,6 +95,11 @@ class PNJunction(Device):
         series_resistance: float = 0.0,
         tau_n: float = 1e-6,
         tau_p: float = 1e-6,
+        mobility_model: str = "constant",
+        tau_rg: float | None = None,
+        breakdown_voltage: float | str | None = None,
+        breakdown_current: float = 1e-3,
+        breakdown_ideality: float = 1.0,
     ) -> None:
         check_doping(na, "na (p-side acceptor doping)")
         check_doping(nd, "nd (n-side donor doping)")
@@ -82,6 +111,16 @@ class PNJunction(Device):
             raise ValueError(f"series_resistance must be >= 0, got {series_resistance}")
         if tau_n <= 0 or tau_p <= 0:
             raise ValueError("minority-carrier lifetimes must be positive")
+        if mobility_model not in _MOBILITY_MODELS:
+            raise ValueError(
+                f"mobility_model must be one of {_MOBILITY_MODELS}, got {mobility_model!r}"
+            )
+        if tau_rg is not None and tau_rg <= 0:
+            raise ValueError(f"tau_rg must be positive or None, got {tau_rg}")
+        if breakdown_current <= 0:
+            raise ValueError("breakdown_current must be positive")
+        if breakdown_ideality <= 0:
+            raise ValueError("breakdown_ideality must be positive")
 
         self.na = na
         self.nd = nd
@@ -92,9 +131,26 @@ class PNJunction(Device):
         self.series_resistance = series_resistance
         self.tau_n = tau_n
         self.tau_p = tau_p
+        self.mobility_model = mobility_model
+        self.tau_rg = tau_rg
+        self.breakdown_current = breakdown_current
+        self.breakdown_ideality = breakdown_ideality
 
         self.vt = thermal_voltage(temperature)  # also validates temperature
         self.ni = material.ni(temperature)
+
+        if isinstance(breakdown_voltage, str):
+            if breakdown_voltage.strip().lower() != "auto":
+                raise ValueError(
+                    "breakdown_voltage must be a number, 'auto', or None; "
+                    f"got {breakdown_voltage!r}"
+                )
+            breakdown_voltage = self.avalanche_breakdown_voltage()
+        if breakdown_voltage is not None and breakdown_voltage <= 0:
+            raise ValueError(
+                f"breakdown_voltage is a magnitude and must be positive, got {breakdown_voltage}"
+            )
+        self.breakdown_voltage = breakdown_voltage
 
     # ------------------------------------------------------------------
     # Electrostatics
@@ -164,35 +220,130 @@ class PNJunction(Device):
     # ------------------------------------------------------------------
     # Current
     # ------------------------------------------------------------------
+    def avalanche_breakdown_voltage(self) -> float:
+        """Estimated avalanche breakdown voltage of the abrupt junction [V].
+
+        Sze & Gibbons universal approximation for one-sided abrupt junctions::
+
+            BV ~ 60 (Eg / 1.1)^1.5 (N_B / 1e16)^-0.75   [V]
+
+        with ``N_B`` the doping of the lightly-doped side (here the
+        reduced doping ``Na Nd / (Na + Nd)``, which reduces to ``N_B`` for
+        one-sided junctions). Accuracy is roughly +/-20 % for 1e14-1e18
+        cm^-3; below ~5 V the real breakdown is tunneling (Zener) dominated.
+        """
+        eg = self.material.bandgap(self.temperature)
+        n_b = self.na * self.nd / (self.na + self.nd)
+        return float(60.0 * (eg / 1.1) ** 1.5 * (n_b / 1e16) ** -0.75)
+
+    # ------------------------------------------------------------------
+    # Current
+    # ------------------------------------------------------------------
+    def _diffusion_coefficients(self) -> tuple[float, float]:
+        """Minority-carrier diffusion coefficients ``(Dn, Dp)`` [cm^2/s]."""
+        t = self.temperature
+        if self.mobility_model == "caughey-thomas":
+            # Electrons are minority in the p side (doping Na), holes in the n side (Nd).
+            return self.material.diffusion_n(t, self.na), self.material.diffusion_p(t, self.nd)
+        return self.material.diffusion_n(t), self.material.diffusion_p(t)
+
     @property
     def saturation_current(self) -> float:
         """Ideal-diode (long-base) saturation current [A].
 
         ``Is = q A ni^2 (Dn / (Ln Na) + Dp / (Lp Nd))``
 
-        with diffusion lengths ``L = sqrt(D tau)``. Minority-carrier
-        mobilities are approximated by the majority-carrier values of the
-        bulk material (doping dependence of mobility is not modeled).
+        with diffusion lengths ``L = sqrt(D tau)``. With
+        ``mobility_model="constant"`` the bulk lightly-doped mobilities are
+        used; ``"caughey-thomas"`` evaluates them at the local doping.
         """
-        dn = self.material.diffusion_n(self.temperature)
-        dp = self.material.diffusion_p(self.temperature)
+        dn, dp = self._diffusion_coefficients()
         ln = np.sqrt(dn * self.tau_n)
         lp = np.sqrt(dp * self.tau_p)
         return float(
             Q * self.area * self.ni**2 * (dn / (ln * self.na) + dp / (lp * self.nd))
         )
 
+    def _rg_width(self, vj: np.ndarray) -> np.ndarray:
+        """Depletion width used by the R-G term: ``W(min(Vj, 0))`` [cm]."""
+        eps = self.material.permittivity
+        v_eff = np.minimum(vj, 0.0)
+        return np.sqrt(
+            2.0 * eps * (self.built_in_potential - v_eff) * (self.na + self.nd)
+            / (Q * self.na * self.nd)
+        )
+
+    def _has_extra_terms(self) -> bool:
+        return self.tau_rg is not None or self.breakdown_voltage is not None
+
+    def _junction_current(self, vj: np.ndarray) -> np.ndarray:
+        """Intrinsic junction current at junction voltage ``vj`` (no Rs) [A]."""
+        n_vt = self.ideality * self.vt
+        with np.errstate(over="ignore"):
+            i = self.saturation_current * np.expm1(vj / n_vt)
+            if self.tau_rg is not None:
+                i_r0 = Q * self.area * self.ni * self._rg_width(vj) / (2.0 * self.tau_rg)
+                i = i + i_r0 * np.expm1(vj / (2.0 * self.vt))
+            if self.breakdown_voltage is not None:
+                nbv_vt = self.breakdown_ideality * self.vt
+                i = i - self.breakdown_current * np.exp(
+                    -(vj + self.breakdown_voltage) / nbv_vt
+                )
+        return i
+
+    def _junction_conductance(self, vj: np.ndarray) -> np.ndarray:
+        """Analytic ``dI/dVj`` of :meth:`_junction_current` [S]."""
+        n_vt = self.ideality * self.vt
+        with np.errstate(over="ignore"):
+            g = self.saturation_current / n_vt * np.exp(vj / n_vt)
+            if self.tau_rg is not None:
+                w = self._rg_width(vj)
+                i_r0 = Q * self.area * self.ni * w / (2.0 * self.tau_rg)
+                # dW/dV = -W / (2 (Vbi - V)) for V < 0, zero for V >= 0.
+                dw = np.where(vj < 0, -w / (2.0 * (self.built_in_potential - vj)), 0.0)
+                di_r0 = i_r0 * dw / w
+                g = g + i_r0 / (2.0 * self.vt) * np.exp(vj / (2.0 * self.vt))
+                g = g + di_r0 * np.expm1(vj / (2.0 * self.vt))
+            if self.breakdown_voltage is not None:
+                nbv_vt = self.breakdown_ideality * self.vt
+                g = g + self.breakdown_current / nbv_vt * np.exp(
+                    -(vj + self.breakdown_voltage) / nbv_vt
+                )
+        return g
+
+    def junction_voltage(self, voltage: float | np.ndarray) -> np.ndarray:
+        """Voltage across the intrinsic junction, ``Vj = V - I Rs`` [V]."""
+        v = np.asarray(voltage, dtype=float)
+        rs = self.series_resistance
+        if rs == 0.0:
+            return v
+        if not self._has_extra_terms():
+            return v - self.current(v) * rs
+        # V = Vj + Rs I(Vj) is strictly increasing in Vj; the root lies
+        # between 0 and V.
+        return bisect_monotonic(
+            lambda vj: vj + rs * self._junction_current(vj),
+            v,
+            np.minimum(v, 0.0),
+            np.maximum(v, 0.0),
+        )
+
     def current(self, voltage: float | np.ndarray) -> np.ndarray:
-        """Diode current from the Shockley equation.
+        """Diode current.
 
-        Without series resistance:
+        Junction current (each optional term only when enabled)::
 
-        ``I = Is (exp(V / (n VT)) - 1)``
+            I(Vj) = Is (exp(Vj/nVT) - 1)                       # diffusion
+                  + Ir0(Vj) (exp(Vj/2VT) - 1)                  # R-G
+                  - Ibv exp(-(Vj + BV)/(nbv VT))               # breakdown
 
-        With series resistance ``Rs``, the implicit equation
-        ``I = Is (exp((V - I Rs) / (n VT)) - 1)`` is solved exactly:
+        with ``Ir0 = q A ni W / (2 tau_rg)``. With series resistance ``Rs``
+        the terminal voltage is ``V = Vj + I Rs``. For the pure Shockley
+        case this is solved exactly with the Lambert W function::
 
-        ``I = (n VT / Rs) W0( (Is Rs / (n VT)) exp((V + Is Rs)/(n VT)) ) - Is``
+            I = (n VT / Rs) W0( (Is Rs / (n VT)) exp((V + Is Rs)/(n VT)) ) - Is
+
+        otherwise by vectorized bisection on ``Vj`` (machine precision).
 
         Parameters
         ----------
@@ -205,15 +356,34 @@ class PNJunction(Device):
             Diode current [A].
         """
         v = np.asarray(voltage, dtype=float)
-        n_vt = self.ideality * self.vt
-        i_s = self.saturation_current
         rs = self.series_resistance
         if rs == 0.0:
-            with np.errstate(over="ignore"):
-                return i_s * np.expm1(v / n_vt)
+            return self._junction_current(v)
+        if self._has_extra_terms():
+            return self._junction_current(self.junction_voltage(v))
+        n_vt = self.ideality * self.vt
+        i_s = self.saturation_current
         # Argument of W in log space: log(Is Rs / nVT) + (V + Is Rs) / nVT
         log_arg = np.log(i_s * rs / n_vt) + (v + i_s * rs) / n_vt
         return n_vt / rs * lambertw_log(log_arg) - i_s
+
+    def conductance(self, voltage: float | np.ndarray) -> np.ndarray:
+        """Small-signal conductance ``dI/dV`` [S].
+
+        ``g = gj / (1 + Rs gj)`` with ``gj = dI/dVj`` evaluated analytically
+        at the junction voltage. Its inverse is the dynamic resistance.
+
+        Parameters
+        ----------
+        voltage : float or ndarray
+            Applied anode-cathode voltage [V].
+        """
+        gj = self._junction_conductance(self.junction_voltage(voltage))
+        rs = self.series_resistance
+        if rs == 0.0:
+            return gj
+        with np.errstate(over="ignore", invalid="ignore"):
+            return np.where(np.isinf(gj), 1.0 / rs, gj / (1.0 + rs * gj))
 
     # Alias satisfying the generic Device interface.
     def iv(self, voltage: float | np.ndarray) -> np.ndarray:
@@ -281,4 +451,7 @@ class PNJunction(Device):
             "built_in_potential [V]": self.built_in_potential,
             "depletion_width [cm]": self.depletion_width(),
             "saturation_current [A]": self.saturation_current,
+            "mobility_model": self.mobility_model,
+            "tau_rg [s]": self.tau_rg,
+            "breakdown_voltage [V]": self.breakdown_voltage,
         }

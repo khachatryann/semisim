@@ -3,8 +3,8 @@
 Example configuration::
 
     [device]
-    type = "pn_junction"          # or "mosfet"
-    material = "Si"               # or "Ge"
+    type = "pn_junction"          # or "mosfet", "nmos", "pmos"
+    material = "Si"               # or "Ge", "GaAs"
 
     [device.parameters]
     na = 1e17
@@ -35,6 +35,8 @@ _DEVICE_TYPES: dict[str, type[Device]] = {
     "pn_junction": PNJunction,
     "diode": PNJunction,
     "mosfet": MOSFET,
+    "nmos": MOSFET,
+    "pmos": MOSFET,
 }
 
 
@@ -73,6 +75,10 @@ def device_from_dict(data: dict[str, Any]) -> Device:
     kwargs: dict[str, Any] = dict(dev.get("parameters", {}))
     if "material" in dev:
         kwargs["material"] = get_material(dev["material"])
+    if key in ("nmos", "pmos"):
+        if "channel" in kwargs and str(kwargs["channel"]).lower()[0] != key[0]:
+            raise ValueError(f"device type {key!r} conflicts with channel={kwargs['channel']!r}")
+        kwargs["channel"] = key[0]
     return _DEVICE_TYPES[key](**kwargs)
 
 
